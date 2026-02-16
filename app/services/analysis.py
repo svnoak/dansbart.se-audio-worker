@@ -9,6 +9,7 @@ Orchestrates the full analysis pipeline:
 
 AGPL-3.0 License - See LICENSE file for details.
 """
+import structlog
 from sqlalchemy.orm import Session, joinedload, selectinload
 from app.core.models import Track, PlaybackLink, TrackStructureVersion, TrackArtist, TrackAlbum
 from app.repository.analysis import AnalysisRepository
@@ -20,6 +21,8 @@ import time
 import os
 import gc
 import psutil
+
+log = structlog.get_logger()
 
 
 class AnalysisService:
@@ -42,7 +45,7 @@ class AnalysisService:
     def _get_analyzer(self):
         """Get or create the cached AudioAnalyzer instance."""
         if self._analyzer is None:
-            print("Loading neckenml models (one-time per worker)...")
+            log.info("loading_neckenml_models", message="One-time load per worker")
             self._analyzer = AudioAnalyzer(audio_source=None, model_dir=self._model_dir)
         return self._analyzer
 
@@ -51,7 +54,7 @@ class AnalysisService:
         process = psutil.Process()
         mem_info = process.memory_info()
         mem_mb = mem_info.rss / 1024 / 1024
-        print(f"   [MEMORY] {stage}: {mem_mb:.1f} MB")
+        log.debug("memory_usage", stage=stage, memory_mb=round(mem_mb, 1))
         return mem_mb
 
     def cleanup_analyzer_memory(self):
@@ -63,9 +66,9 @@ class AnalysisService:
             try:
                 self._analyzer.close()
                 self._analyzer = None
-                print("   [CLEANUP] Analyzer resources released")
+                log.debug("analyzer_cleanup", message="Analyzer resources released")
             except Exception as e:
-                print(f"   [CLEANUP] Warning during analyzer cleanup: {e}")
+                log.warn("analyzer_cleanup_warning", error=str(e))
             finally:
                 gc.collect()
 
@@ -90,7 +93,7 @@ class AnalysisService:
             return
 
         # Update state: PROCESSING
-        print(f"Status Update: {track.title} -> PROCESSING")
+        log.info("status_update", title=track.title, status="PROCESSING")
         track.processing_status = "PROCESSING"
         self.db.commit()
 
@@ -99,16 +102,16 @@ class AnalysisService:
 
             if success:
                 track.processing_status = "DONE"
-                print(f"Status Update: {track.title} -> DONE")
+                log.info("status_update", title=track.title, status="DONE")
             else:
                 track.processing_status = "FAILED"
-                print(f"Status Update: {track.title} -> FAILED")
+                log.warn("status_update", title=track.title, status="FAILED")
 
             self.db.commit()
 
         except Exception as e:
             self.db.rollback()
-            print(f"Critical Failure processing {track.title}: {e}")
+            log.error("critical_failure", title=track.title, error=str(e))
             try:
                 track.processing_status = "FAILED"
                 self.db.commit()
@@ -124,9 +127,9 @@ class AnalysisService:
                 try:
                     self._analyzer.close()
                     self._analyzer = None
-                    print("   [CLEANUP] Analyzer closed in finally block")
+                    log.debug("analyzer_cleanup", message="Analyzer closed in finally block")
                 except Exception as e:
-                    print(f"   [CLEANUP] Error closing analyzer: {e}")
+                    log.error("analyzer_cleanup_error", error=str(e))
 
             # Clear SQLAlchemy Identity Map
             self.db.expire_all()
@@ -138,7 +141,7 @@ class AnalysisService:
 
     def _process_single_track(self, track: Track) -> bool:
         """Process a single track through the analysis pipeline."""
-        print(f"Processing: {track.title}")
+        log.info("processing_track", title=track.title)
 
         # Get artist info
         artist_name = ""
@@ -155,7 +158,7 @@ class AnalysisService:
 
         # Fetch audio
         if existing_link:
-            print(f"   Using existing YouTube link: {existing_link.deep_link}")
+            log.info("using_existing_youtube_link", deep_link=existing_link.deep_link)
             result = self.fetcher.fetch_track_audio(
                 track_id=str(track.id),
                 query="",
@@ -166,7 +169,7 @@ class AnalysisService:
             )
         else:
             query = f"{artist_name} - {track.title}"
-            print(f"   Searching YouTube for: {query}")
+            log.info("searching_youtube", query=query)
             result = self.fetcher.fetch_track_audio(
                 track_id=str(track.id),
                 query=query,
@@ -176,7 +179,7 @@ class AnalysisService:
             )
 
         if not result:
-            print(f"   No audio found, attempting title-based classification...")
+            log.info("no_audio_found", message="Attempting title-based classification")
             return self._classify_from_title(track)
 
         file_path = result['file_path']
@@ -189,7 +192,7 @@ class AnalysisService:
         # Get analyzer and run analysis
         analyzer = self._get_analyzer()
 
-        print(f"   Starting CPU-intensive analysis...")
+        log.info("starting_analysis", message="Starting CPU-intensive analysis")
         self._log_memory_usage("Before analysis")
         start_time = time.time()
 
@@ -198,7 +201,7 @@ class AnalysisService:
 
         end_time = time.time()
         self._log_memory_usage("After analysis")
-        print(f"   Analysis finished in {end_time - start_time:.2f} seconds.")
+        log.info("analysis_complete", duration_seconds=round(end_time - start_time, 2))
 
         if result:
             data = result["features"]
@@ -249,7 +252,7 @@ class AnalysisService:
             self.db.add(track)
 
             # Auto-classify
-            print(f"   Auto-classifying...")
+            log.info("auto_classifying")
             self.classifier_service.classify_track_immediately(track, analysis_data=data)
 
             # Cleanup
@@ -308,10 +311,10 @@ class AnalysisService:
                 break
 
         if not detected_style:
-            print(f"   Could not infer style from title: {track.title}")
+            log.warn("style_inference_failed", title=track.title)
             return False
 
-        print(f"   Inferred style from title: {detected_style}")
+        log.info("style_inferred_from_title", detected_style=detected_style)
 
         from app.core.models import TrackDanceStyle
 

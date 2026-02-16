@@ -6,11 +6,11 @@ downloads the best match, and validates the audio file.
 
 AGPL-3.0 License - See LICENSE file for details.
 """
+import structlog
 import os
 import glob
 import re
 import yt_dlp
-import logging
 import difflib
 
 
@@ -25,7 +25,7 @@ class AudioFetcher:
     def __init__(self, temp_dir="./temp_audio"):
         self.temp_dir = temp_dir
         os.makedirs(self.temp_dir, exist_ok=True)
-        self.logger = logging.getLogger(__name__)
+        self.log = structlog.get_logger()
         self._expected_duration_ms = None
         self._track_title = None
         self._artist_name = None
@@ -39,7 +39,7 @@ class AudioFetcher:
         title = re.sub(r'\([^)]*\)', '', title)
         title = re.sub(r'\[[^\]]*\]', '', title)
         # Remove common suffixes
-        title = re.sub(r'\s*[-–—]\s*(official|audio|video|lyric|lyrics|hd|hq|4k|visualizer|visualiser).*$', '', title, flags=re.IGNORECASE)
+        title = re.sub(r'\s*[-\u2013\u2014]\s*(official|audio|video|lyric|lyrics|hd|hq|4k|visualizer|visualiser).*$', '', title, flags=re.IGNORECASE)
         # Remove special characters and extra whitespace
         title = re.sub(r'[^\w\s]', ' ', title)
         title = re.sub(r'\s+', ' ', title).strip()
@@ -91,7 +91,7 @@ class AudioFetcher:
         try:
             # --- DIRECT DOWNLOAD PATH (User-provided link) ---
             if direct_video_id:
-                self.logger.info(f"Direct download for video ID: {direct_video_id}")
+                self.log.info("direct_download", video_id=direct_video_id)
                 video_url = f"https://www.youtube.com/watch?v={direct_video_id}"
 
                 with yt_dlp.YoutubeDL(dl_opts) as ydl:
@@ -104,7 +104,7 @@ class AudioFetcher:
                 # Verify downloaded audio
                 verification = self._verify_downloaded_audio(expected_file)
                 if not verification["valid"]:
-                    self.logger.warning(f"Direct download verification failed: {verification['reason']}")
+                    self.log.warn("direct_download_verification_failed", reason=verification['reason'])
 
                 if os.path.exists(expected_file):
                     return {
@@ -124,20 +124,20 @@ class AudioFetcher:
             }
 
             with yt_dlp.YoutubeDL(search_opts) as ydl:
-                self.logger.info(f"Searching top 20 for: {query}")
+                self.log.info("youtube_search", query=query, result_count=20)
 
                 search_query = f"ytsearch20:{query}"
                 info = ydl.extract_info(search_query, download=False)
                 entries = info.get('entries', [])
 
                 if not entries:
-                    self.logger.warning(f"Search found no results for {query}.")
+                    self.log.warn("search_no_results", query=query)
                     return None
 
                 best_match = self._find_best_match(entries, expected_duration_ms)
 
                 if not best_match:
-                    self.logger.warning(f"All candidates rejected by filter.")
+                    self.log.warn("all_candidates_rejected")
                     return None
 
                 # Get full info and download
@@ -148,7 +148,7 @@ class AudioFetcher:
 
             # Download the verified video
             with yt_dlp.YoutubeDL(dl_opts) as ydl:
-                self.logger.info(f"Downloading verified match: {youtube_title}")
+                self.log.info("downloading_match", title=youtube_title)
                 ydl.download([webpage_url])
 
             expected_file = f"{self.temp_dir}/{track_id}.mp3"
@@ -157,11 +157,11 @@ class AudioFetcher:
                 verification = self._verify_downloaded_audio(expected_file)
 
                 if not verification["valid"]:
-                    self.logger.warning(f"Post-download verification failed: {verification['reason']}")
+                    self.log.warn("post_download_verification_failed", reason=verification['reason'])
                     self.cleanup(track_id)
                     return None
 
-                self.logger.info(f"Audio verified: {verification['reason']}")
+                self.log.info("audio_verified", reason=verification['reason'])
                 return {
                     "file_path": expected_file,
                     "youtube_id": youtube_id,
@@ -171,7 +171,7 @@ class AudioFetcher:
                 }
 
         except Exception as e:
-            self.logger.error(f"Download failed for {track_id}: {e}")
+            self.log.error("download_failed", track_id=track_id, error=str(e))
             return None
 
         return None
@@ -223,7 +223,7 @@ class AudioFetcher:
                         title_similarity = max(title_similarity, 0.9)
 
             if normalized_track_title and title_similarity < MIN_TITLE_SIMILARITY:
-                self.logger.debug(f"Skipping '{video_title}' - title similarity too low ({title_similarity:.2f})")
+                self.log.debug("candidate_rejected_low_title_similarity", video_title=video_title, title_similarity=round(title_similarity, 2))
                 continue
 
             score += title_similarity * TITLE_WEIGHT
@@ -269,18 +269,18 @@ class AudioFetcher:
                 'artist_sim': artist_similarity
             })
 
-            self.logger.debug(f"'{video_title}' - Score: {score:.2f}")
+            self.log.debug("candidate_scored", video_title=video_title, score=round(score, 2))
 
         candidates.sort(key=lambda x: x['score'], reverse=True)
 
         if candidates:
             best = candidates[0]
-            self.logger.info(f"Best match: '{best['video'].get('title')}' (score: {best['score']:.2f})")
+            self.log.info("best_match_found", title=best['video'].get('title'), score=round(best['score'], 2))
 
             if best['score'] >= MIN_CONFIDENCE:
                 return best['video']
             else:
-                self.logger.warning(f"Best score {best['score']:.2f} below threshold {MIN_CONFIDENCE}")
+                self.log.warn("best_score_below_threshold", score=round(best['score'], 2), threshold=MIN_CONFIDENCE)
 
         return None
 
@@ -351,5 +351,5 @@ class AudioFetcher:
                 }
 
         except Exception as e:
-            self.logger.error(f"Audio verification failed: {e}")
+            self.log.error("audio_verification_failed", error=str(e))
             return {"valid": False, "actual_duration_ms": 0, "reason": f"Verification error: {e}"}

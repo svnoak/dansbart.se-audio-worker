@@ -8,6 +8,8 @@ FROM python:3.10-slim
 # 1. Install System Dependencies for Audio Processing & ML
 RUN apt-get update && apt-get install -y \
     build-essential \
+    ca-certificates \
+    curl \
     libsndfile1 \
     ffmpeg \
     g++ \
@@ -43,8 +45,10 @@ COPY --chown=celeryuser:celeryuser app/ ./app/
 # 7. Create temp directory for audio downloads
 RUN mkdir -p /app/temp_audio && chown celeryuser:celeryuser /app/temp_audio
 
-# 8. Create models directory
-RUN mkdir -p /app/models && chown celeryuser:celeryuser /app/models
+# 8. Create models directory and download MusiCNN models (baked into image)
+RUN mkdir -p /app/models
+COPY scripts/ ./scripts/
+RUN bash ./scripts/download_models.sh && chown -R celeryuser:celeryuser /app/models
 
 # Switch to non-root user
 USER celeryuser

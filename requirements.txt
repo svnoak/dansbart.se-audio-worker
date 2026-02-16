@@ -15,8 +15,8 @@ celery
 redis
 
 # neckenml Analyzer - AGPL-3.0 Analysis & Classification Engine
-# (also installs neckenml-core as a dependency)
-neckenml-analyzer>=0.3.0
+# Installed from local mount in docker-compose.yml for development
+# For production, uncomment: neckenml-analyzer>=0.3.0
 
 # Audio dependencies (Essentia uses AGPL-3.0)
 essentia-tensorflow>=2.1b6.dev0
@@ -30,6 +30,9 @@ mutagen
 
 # Music Theory (used by StyleClassifier)
 music21
+
+# Structured Logging
+structlog>=24.1.0
 
 # Utilities
 psutil

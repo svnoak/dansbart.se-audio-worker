@@ -6,6 +6,7 @@ Requires: TensorFlow, Essentia, Madmom, Librosa, neckenml
 
 AGPL-3.0 License - See LICENSE file for details.
 """
+import structlog
 from celery.exceptions import MaxRetriesExceededError
 from celery.signals import worker_shutdown
 from app.core.celery_app import celery_app
@@ -13,6 +14,8 @@ from app.core.database import SessionLocal
 from app.services.analysis import AnalysisService
 from app.core.models import Track
 import gc
+
+log = structlog.get_logger()
 
 # Global variable (per worker process)
 # Loads once, reused for subsequent tasks
@@ -23,7 +26,7 @@ def get_analysis_service():
     """Get or create the analysis service with loaded models."""
     global _worker_analysis_service
     if _worker_analysis_service is None:
-        print("AUDIO WORKER INIT: Loading neckenml models for this process...")
+        log.info("loading_neckenml_models", message="Loading neckenml models for this process")
         _worker_analysis_service = AnalysisService(None)
     return _worker_analysis_service
 
@@ -31,7 +34,7 @@ def get_analysis_service():
 def cleanup_resources():
     """Clean up memory after analysis by forcing garbage collection."""
     collected = gc.collect()
-    print(f"   [CLEANUP] Python GC collected {collected} objects")
+    log.debug("gc_cleanup", objects_collected=collected)
 
 
 @worker_shutdown.connect
@@ -40,9 +43,9 @@ def cleanup_worker_on_shutdown(**kwargs):
     global _worker_analysis_service
     if _worker_analysis_service and hasattr(_worker_analysis_service, '_analyzer'):
         if _worker_analysis_service._analyzer:
-            print("WORKER SHUTDOWN: Cleaning up neckenml models...")
+            log.info("worker_shutdown_cleanup", message="Cleaning up neckenml models")
             _worker_analysis_service._analyzer.close()
-            print("WORKER SHUTDOWN: Cleanup complete")
+            log.info("worker_shutdown_complete", message="Cleanup complete")
 
 
 @celery_app.task(
@@ -68,7 +71,7 @@ def analyze_track_task(self, track_id: str):
     """
     attempt = self.request.retries + 1
     max_attempts = self.max_retries + 1
-    print(f"AUDIO WORKER: Starting analysis for {track_id} (attempt {attempt}/{max_attempts})")
+    log.info("analysis_started", track_id=track_id, attempt=attempt, max_attempts=max_attempts)
 
     # Get the service (loads model if first run)
     service = get_analysis_service()
@@ -76,15 +79,23 @@ def analyze_track_task(self, track_id: str):
     # Create fresh DB session
     db = SessionLocal()
     try:
-        # Inject session into reused service
+        # Inject session into reused service (repo/classifier_service are None until first use)
         service.db = db
-        service.repo.db = db
-        service.classifier_service.db = db
+        if service.repo is None:
+            from app.repository.analysis import AnalysisRepository
+            service.repo = AnalysisRepository(db)
+        else:
+            service.repo.db = db
+        if service.classifier_service is None:
+            from app.services.classification import ClassificationService
+            service.classifier_service = ClassificationService(db)
+        else:
+            service.classifier_service.db = db
 
         # Run analysis
         service.analyze_track_by_id(track_id)
 
-        print(f"AUDIO WORKER: Finished {track_id}")
+        log.info("analysis_finished", track_id=track_id)
 
         # Clean up analyzer memory
         service.cleanup_analyzer_memory()
@@ -92,45 +103,45 @@ def analyze_track_task(self, track_id: str):
         gc.collect()
 
     except MaxRetriesExceededError:
-        print(f"AUDIO WORKER: Max retries exceeded for {track_id}, marking as FAILED")
+        log.error("max_retries_exceeded", track_id=track_id)
         try:
             track = db.query(Track).filter(Track.id == track_id).first()
             if track:
                 track.processing_status = "FAILED"
                 db.commit()
         except Exception as status_err:
-            print(f"Failed to update status to FAILED: {status_err}")
+            log.error("failed_to_update_status", track_id=track_id, target_status="FAILED", error=str(status_err))
         raise
 
     except Exception as e:
         db.rollback()
-        print(f"AUDIO WORKER FAILED (attempt {attempt}/{max_attempts}): {e}")
+        log.error("analysis_failed", track_id=track_id, attempt=attempt, max_attempts=max_attempts, error=str(e))
 
         if self.request.retries >= self.max_retries:
-            print(f"AUDIO WORKER: Final attempt failed for {track_id}, marking as FAILED")
+            log.error("final_attempt_failed", track_id=track_id)
             try:
                 track = db.query(Track).filter(Track.id == track_id).first()
                 if track:
                     track.processing_status = "FAILED"
                     db.commit()
             except Exception as status_err:
-                print(f"Failed to update status to FAILED: {status_err}")
+                log.error("failed_to_update_status", track_id=track_id, target_status="FAILED", error=str(status_err))
         else:
             try:
                 track = db.query(Track).filter(Track.id == track_id).first()
                 if track and track.processing_status == "PROCESSING":
                     track.processing_status = "PENDING"
                     db.commit()
-                    print(f"Reset {track_id} to PENDING for retry")
+                    log.info("status_reset_to_pending", track_id=track_id)
             except Exception as status_err:
-                print(f"Failed to reset status to PENDING: {status_err}")
+                log.error("failed_to_update_status", track_id=track_id, target_status="PENDING", error=str(status_err))
         raise
 
     finally:
         try:
             service.cleanup_analyzer_memory()
         except Exception as e:
-            print(f"Error during finally cleanup: {e}")
+            log.error("finally_cleanup_error", error=str(e))
 
         cleanup_resources()
         gc.collect()

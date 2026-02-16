@@ -6,9 +6,12 @@ Optimized for read-heavy, write-rare access patterns.
 
 AGPL-3.0 License - See LICENSE file for details.
 """
+import structlog
 import time
 from typing import Dict, Tuple, Optional, List
 from sqlalchemy.orm import Session
+
+log = structlog.get_logger()
 
 # Module-level cache
 _keyword_cache: Dict[str, Tuple[str, Optional[str]]] = {}
@@ -50,7 +53,7 @@ def get_sorted_keywords(db: Session) -> List[Tuple[str, str, Optional[str]]]:
 
     Returns:
         List of (keyword, main_style, sub_style) tuples, sorted by keyword length descending.
-        This ordering ensures "bingsjöpolska" matches before "polska".
+        This ordering ensures "bingsjopolska" matches before "polska".
     """
     cache = get_keywords(db)
     return [(kw, main, sub) for kw, (main, sub) in cache.items()]
@@ -64,7 +67,7 @@ def invalidate_cache() -> None:
     global _keyword_cache, _cache_timestamp
     _keyword_cache = {}
     _cache_timestamp = 0
-    print("[StyleKeywordsCache] Cache invalidated")
+    log.info("cache_invalidated")
 
 
 def _refresh_cache(db: Session) -> None:
@@ -86,7 +89,7 @@ def _refresh_cache(db: Session) -> None:
     }
 
     _cache_timestamp = time.time()
-    print(f"[StyleKeywordsCache] Loaded {len(_keyword_cache)} keywords from DB")
+    log.info("cache_refreshed", keyword_count=len(_keyword_cache))
 
 
 def get_cache_info() -> dict:

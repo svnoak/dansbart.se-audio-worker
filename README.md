@@ -49,12 +49,8 @@ cd dansbart-audio-worker
 cp .env.example .env
 # Edit .env with your database credentials
 
-# Download ML models (see Models section)
-mkdir -p models
-# ... download models to ./models/
-
-# Start the worker
-docker-compose up -d
+# Build and start (MusiCNN models are downloaded automatically during docker build)
+docker-compose up -d --build
 ```
 
 ### Manual Installation
@@ -94,7 +90,18 @@ celery -A app.core.celery_app worker --loglevel=info --pool=solo -Q audio
 
 ## Models
 
-The worker requires pre-trained models for classifying tracks. You can simply use the model from neckenml-analyzer.
+The worker requires pre-trained MusiCNN models (`msd-musicnn-1.pb`, `voice_instrumental-musicnn-msd-1.pb`). **When using Docker, these are downloaded automatically at image build time**—no one-time setup needed.
+
+For non-Docker runs (or to refresh models on the host), use:
+
+```bash
+./scripts/download_models.sh
+```
+
+This downloads the two `.pb` files into **`models/`** in this repo. The Dockerfile runs this script during `docker build`, so the image ships with the models in `/app/models`.
+
+If the worker logs **"Invalid GraphDef"** or **"MusiCNN embeddings model not loaded"**, the `.pb` file may be corrupted. Rebuild the image, or for local runs delete the files in `models/` and re-run with `-f`: `./scripts/download_models.sh -f`.
+
 ## Integration with dansbart.se
 
 This worker is designed to run alongside the main dansbart.se application:
