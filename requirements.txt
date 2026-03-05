@@ -16,7 +16,7 @@ redis
 
 # neckenml Analyzer - AGPL-3.0 Analysis & Classification Engine
 # Installed from local mount in docker-compose.yml for development
-# For production, uncomment: neckenml-analyzer>=0.3.0
+neckenml-analyzer>=0.3.0
 
 # Audio dependencies (Essentia uses AGPL-3.0)
 essentia-tensorflow>=2.1b6.dev0
