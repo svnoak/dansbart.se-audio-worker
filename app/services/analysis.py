@@ -239,6 +239,9 @@ class AnalysisService:
             track.is_instrumental = data.get('is_likely_instrumental', False)
 
             track.swing_ratio = data.get('swing_ratio')
+            track.lilt_score = data.get('lilt_score')
+            track.lilt_consistency = data.get('lilt_consistency')
+            track.lilt_pattern = data.get('lilt_pattern')
             track.articulation = data.get('articulation')
             track.bounciness = data.get('bounciness')
             track.punchiness = data.get('punchiness')
@@ -246,6 +249,16 @@ class AnalysisService:
             track.polska_score = data.get('polska_score')
             track.hambo_score = data.get('hambo_score')
             track.voice_probability = data.get('voice_probability')
+
+            avg_beat_ratios = data.get('avg_beat_ratios', [])
+            track.r1_mean = float(avg_beat_ratios[0]) if len(avg_beat_ratios) > 0 else None
+            track.r2_mean = float(avg_beat_ratios[1]) if len(avg_beat_ratios) > 1 else None
+            track.r3_mean = float(avg_beat_ratios[2]) if len(avg_beat_ratios) > 2 else None
+            track.asymmetry_score = data.get('asymmetry_score')
+            track.asymmetry_consistency = data.get('asymmetry_consistency')
+            track.pattern_type = data.get('pattern_type')
+            track.ternary_confidence = data.get('ternary_confidence')
+            track.meter_ambiguous = bool(data.get('meter_ambiguous', False))
 
             track.bars = data.get('bars')
             track.sections = data.get('sections')
