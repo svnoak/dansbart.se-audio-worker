@@ -64,6 +64,7 @@ class ClassificationService:
                     tempo_category=p.get('dance_tempo'),
                     bpm_multiplier=p.get('multiplier', 1.0),
                     effective_bpm=p.get('effective_bpm', 0),
+                    source=p.get('source'),
                     is_user_confirmed=False
                 )
                 self.db.add(new_style)
