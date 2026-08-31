@@ -50,11 +50,24 @@ class ClassificationService:
     def _save_predictions(self, track, predictions):
         """Save classification predictions to database."""
         try:
-            # Remove existing styles (only for non-confirmed tracks)
-            self.db.query(TrackDanceStyle).filter(TrackDanceStyle.track_id == track.id).delete()
+            confirmed_styles = {
+                row.dance_style
+                for row in self.db.query(TrackDanceStyle.dance_style).filter(
+                    TrackDanceStyle.track_id == track.id,
+                    TrackDanceStyle.is_user_confirmed.is_(True),
+                ).all()
+            }
 
-            # Add new styles
+            # Remove existing styles, preserving user-confirmed rows
+            self.db.query(TrackDanceStyle).filter(
+                TrackDanceStyle.track_id == track.id,
+                TrackDanceStyle.is_user_confirmed.is_(False),
+            ).delete()
+
+            # Add new styles, skipping any style a user already confirmed
             for p in predictions:
+                if p['style'] in confirmed_styles:
+                    continue
                 new_style = TrackDanceStyle(
                     track_id=track.id,
                     dance_style=p['style'],
