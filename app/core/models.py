@@ -175,6 +175,7 @@ class TrackDanceStyle(Base):
     tempo_category: Mapped[str | None] = mapped_column(String, nullable=True)
     bpm_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     effective_bpm: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str | None] = mapped_column(String, nullable=True)
 
     track = relationship("Track", back_populates="dance_styles")
     confirmation_count: Mapped[int] = mapped_column(Integer, default=0)
