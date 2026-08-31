@@ -97,6 +97,78 @@ class TestClassificationService:
 
         assert mock_db_session.rollback.called
 
+    def test_save_predictions_preserves_user_confirmed_style(self, classification_service, sample_track):
+        """A user-confirmed style row must survive a reclassify."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.core.models import TrackDanceStyle
+
+        engine = create_engine("sqlite:///:memory:")
+        TrackDanceStyle.__table__.create(engine)
+        db = sessionmaker(bind=engine)()
+        db.add(TrackDanceStyle(
+            track_id=sample_track.id, dance_style="Schottis", sub_style=None,
+            is_primary=True, confidence=1.0, tempo_category="Snabbt",
+            bpm_multiplier=1.0, effective_bpm=130, confirmation_count=3,
+            is_user_confirmed=True,
+        ))
+        db.commit()
+
+        classification_service.db = db
+        predictions = [{
+            'style': 'Polska', 'sub_style': None, 'type': 'Primary',
+            'confidence': 0.7, 'dance_tempo': 'Medium', 'multiplier': 1.0, 'effective_bpm': 110,
+        }]
+        classification_service._save_predictions(sample_track, predictions)
+
+        rows = {r.dance_style: r for r in db.query(TrackDanceStyle)
+                .filter(TrackDanceStyle.track_id == sample_track.id).all()}
+
+        assert rows['Schottis'].is_user_confirmed is True
+        assert rows['Schottis'].effective_bpm == 130
+        assert rows['Polska'].is_user_confirmed is False
+        db.close()
+
+    def test_save_predictions_skips_style_already_confirmed(self, classification_service, sample_track):
+        """No duplicate row is created when a prediction repeats an already-confirmed style."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.core.models import TrackDanceStyle
+
+        engine = create_engine("sqlite:///:memory:")
+        TrackDanceStyle.__table__.create(engine)
+        db = sessionmaker(bind=engine)()
+        db.add(TrackDanceStyle(
+            track_id=sample_track.id, dance_style="Schottis", sub_style=None,
+            is_primary=True, confidence=1.0, tempo_category="Snabbt",
+            bpm_multiplier=1.0, effective_bpm=130, confirmation_count=3,
+            is_user_confirmed=True,
+        ))
+        db.commit()
+
+        classification_service.db = db
+        predictions = [
+            {'style': 'Schottis', 'sub_style': None, 'type': 'Primary',
+             'confidence': 0.6, 'dance_tempo': 'Medium', 'multiplier': 1.0, 'effective_bpm': 100},
+            {'style': 'Vals', 'sub_style': None, 'type': 'Secondary',
+             'confidence': 0.4, 'dance_tempo': 'Lugnt', 'multiplier': 1.0, 'effective_bpm': 90},
+        ]
+        classification_service._save_predictions(sample_track, predictions)
+
+        schottis_rows = db.query(TrackDanceStyle).filter(
+            TrackDanceStyle.track_id == sample_track.id,
+            TrackDanceStyle.dance_style == 'Schottis').all()
+        assert len(schottis_rows) == 1
+        assert schottis_rows[0].is_user_confirmed is True
+        assert schottis_rows[0].effective_bpm == 130
+
+        vals = db.query(TrackDanceStyle).filter(
+            TrackDanceStyle.track_id == sample_track.id,
+            TrackDanceStyle.dance_style == 'Vals').first()
+        assert vals is not None
+        assert vals.is_user_confirmed is False
+        db.close()
+
 
 class TestClassificationIntegration:
     """Integration tests that test the full classification flow."""
