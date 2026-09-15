@@ -43,16 +43,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN useradd -m -u 1000 celeryuser && \
     chown -R celeryuser:celeryuser /app
 
-# 6. Copy Application Code
-COPY --chown=celeryuser:celeryuser app/ ./app/
-
-# 7. Create temp directory for audio downloads
-RUN mkdir -p /app/temp_audio && chown celeryuser:celeryuser /app/temp_audio
-
-# 8. Create models directory and download MusiCNN models (baked into image)
+# 6. Create models directory and download MusiCNN models (baked into image)
 RUN mkdir -p /app/models
 COPY scripts/ ./scripts/
 RUN bash ./scripts/download_models.sh && chown -R celeryuser:celeryuser /app/models
+
+# 7. Copy Application Code
+COPY --chown=celeryuser:celeryuser app/ ./app/
+
+# 8. Create temp directory for audio downloads
+RUN mkdir -p /app/temp_audio && chown celeryuser:celeryuser /app/temp_audio
 
 # Switch to non-root user
 USER celeryuser
